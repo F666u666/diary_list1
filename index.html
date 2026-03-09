@@ -243,6 +243,15 @@ input,textarea{user-select:text !important;-webkit-user-select:text !important;-
 
 /* CARRY DIALOG */
 .overlay{position:fixed;inset:0;z-index:600;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.15);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);animation:fadeIn 0.22s ease;}
+/* Splash Screen */
+.splash{position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;background:#faf9f7;transition:opacity 0.8s ease;}
+.splash.hide{opacity:0;pointer-events:none;}
+.splash canvas{position:absolute;inset:0;width:100%;height:100%;}
+.splash-title{position:relative;z-index:2;font-family:'Playfair Display SC',serif;font-size:clamp(22px,7vw,40px);letter-spacing:0.28em;color:rgba(26,20,16,0.72);opacity:0;animation:splashFadeIn 1.0s ease 0.3s forwards;}
+.splash-line{position:relative;z-index:2;width:0;height:1px;background:rgba(26,20,16,0.15);margin-top:14px;animation:splashLine 0.9s ease 0.9s forwards;}
+.splash-sub{position:relative;z-index:2;font-family:'Noto Serif JP',serif;font-size:10px;font-weight:300;letter-spacing:0.22em;color:rgba(26,20,16,0.28);opacity:0;margin-top:10px;animation:splashFadeIn 0.8s ease 1.3s forwards;}
+@keyframes splashFadeIn{0%{opacity:0;transform:translateY(5px);}100%{opacity:1;transform:translateY(0);}}
+@keyframes splashLine{0%{width:0;}100%{width:48px;}}
 .onboarding{position:fixed;inset:0;z-index:900;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#faf9f7;transition:opacity 0.5s;}
 [data-theme="dark"] .onboarding{background:#1a1612;}
 .ob-screen{display:none;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;padding:48px 32px;text-align:center;animation:fadeIn 0.4s ease;}
@@ -423,6 +432,12 @@ input,textarea{user-select:text !important;-webkit-user-select:text !important;-
   <div class="streak-wrap" id="streakWrap"></div>
 </div>
 
+<div class="splash" id="splash" style="display:none;">
+  <canvas id="splashCanvas"></canvas>
+  <div class="splash-title">Diary List</div>
+  <div class="splash-line"></div>
+  <div class="splash-sub">毎日を、丁寧に。</div>
+</div>
 <div class="wrapper" id="wrapper">
   <div class="card" id="tasksCard">
     <div class="card-title">Tasks</div>
@@ -591,71 +606,46 @@ input,textarea{user-select:text !important;-webkit-user-select:text !important;-
 </div>
 <script>
 /* Audio */
-/* ── Audio (OfflineAudioContext pre-render for screen recording) ── */
+/* ── Audio ── */
 const vib=p=>{try{navigator.vibrate&&navigator.vibrate(p);}catch(e){}};
-
-const _sounds={};
-
-function _renderSound(freqs,duration){
-  return new Promise(resolve=>{
-    try{
-      const sr=44100;
-      const len=Math.ceil(sr*duration);
-      const ctx=new OfflineAudioContext(1,len,sr);
-      freqs.forEach(([f,delay=0,vol=0.10,decay=0.7])=>{
-        const o=ctx.createOscillator();
-        const g=ctx.createGain();
-        o.connect(g);g.connect(ctx.destination);
-        o.type='sine';o.frequency.value=f;
-        const t=ctx.currentTime+delay;
-        g.gain.setValueAtTime(0,t);
-        g.gain.linearRampToValueAtTime(vol,t+0.008);
-        g.gain.exponentialRampToValueAtTime(0.001,t+decay);
-        o.start(t);o.stop(t+decay+0.05);
-      });
-      ctx.startRendering().then(buf=>{
-        // convert AudioBuffer to WAV blob URL
-        const pcm=buf.getChannelData(0);
-        const wav=new ArrayBuffer(44+pcm.length*2);
-        const v=new DataView(wav);
-        const s=(o,val)=>v.setUint32(o,val,true);
-        const ss=(o,val)=>v.setUint16(o,val,true);
-        [0x52,0x49,0x46,0x46].forEach((b,i)=>v.setUint8(i,b));
-        s(4,36+pcm.length*2);
-        [0x57,0x41,0x56,0x45,0x66,0x6d,0x74,0x20].forEach((b,i)=>v.setUint8(8+i,b));
-        s(16,16);ss(20,1);ss(22,1);s(24,44100);s(28,88200);ss(32,2);ss(34,16);
-        [0x64,0x61,0x74,0x61].forEach((b,i)=>v.setUint8(36+i,b));
-        s(40,pcm.length*2);
-        const out=new Int16Array(wav,44);
-        pcm.forEach((s,i)=>out[i]=Math.max(-32768,Math.min(32767,s*32767)));
-        resolve(URL.createObjectURL(new Blob([wav],{type:'audio/wav'})));
-      }).catch(()=>resolve(null));
-    }catch(e){resolve(null);}
-  });
+let _ac=null;
+function getAC(){
+  if(!_ac)_ac=new(window.AudioContext||window.webkitAudioContext)();
+  if(_ac.state==='suspended')_ac.resume();
+  return _ac;
 }
-
-async function initSounds(){
-  if(_sounds._ready)return;
-  _sounds._ready=true;
-  _sounds.add  =await _renderSound([[1047,0,0.10,0.6],[1319,0.06,0.09,0.6],[1568,0.12,0.08,0.6],[2093,0.18,0.07,0.6]],1.2);
-  _sounds.check=await _renderSound([[1568,0,0.12,0.7],[2349,0.09,0.10,0.7],[3136,0.17,0.07,0.7]],1.2);
-  _sounds.del  =await _renderSound([[880,0,0.10,0.35],[740,0.08,0.08,0.35]],0.8);
-  _sounds.cat  =await _renderSound([[1319,0,0.09,0.5],[1661,0.06,0.08,0.5],[1976,0.11,0.07,0.5]],1.0);
-  _sounds.done =await _renderSound([[523,0,0.13,0.9],[659,0.10,0.12,0.9],[784,0.20,0.11,0.9],[1047,0.30,0.13,0.9],[1319,0.42,0.11,0.9],[2093,0.55,0.08,0.5],[2637,0.62,0.07,0.5],[3136,0.68,0.06,0.5]],2.0);
+function bell(freq,t,vol=0.06,decay=0.8){
+  try{
+    const ctx=getAC();
+    const o=ctx.createOscillator(),g=ctx.createGain();
+    o.connect(g);g.connect(ctx.destination);
+    o.type='sine';o.frequency.setValueAtTime(freq,t);
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(vol,t+.008);
+    g.gain.exponentialRampToValueAtTime(.0001,t+decay);
+    o.start(t);o.stop(t+decay+.05);
+  }catch(e){}
 }
-function playSound(name){
-  const src=_sounds[name];if(!src)return;
-  const a=new Audio(src);a.play().catch(()=>{});
+function playAdd(){
+  try{const ctx=getAC(),t=ctx.currentTime;bell(1047,t,.10,.6);bell(1319,t+.06,.09,.6);bell(1568,t+.12,.08,.6);bell(2093,t+.18,.07,.6);}catch(e){}
+  vib([12,50,8]);
 }
-// initialize on first user interaction
-document.addEventListener('touchstart',()=>initSounds(),{once:true,passive:true});
-document.addEventListener('mousedown',()=>initSounds(),{once:true});
-
-function playAdd(){playSound('add');vib([12,50,8]);}
-function playCheck(){playSound('check');vib(18);}
-function playDelete(){playSound('del');vib([8,40,8]);}
-function playCatAdd(){playSound('cat');vib(10);}
-function playAllDone(){playSound('done');vib([15,40,15,40,30]);}
+function playCheck(){
+  try{const ctx=getAC(),t=ctx.currentTime;bell(1568,t,.12,.7);bell(2349,t+.09,.10,.7);bell(3136,t+.17,.07,.7);}catch(e){}
+  vib(18);
+}
+function playDelete(){
+  try{const ctx=getAC(),t=ctx.currentTime;bell(880,t,.10,.35);bell(740,t+.08,.08,.35);}catch(e){}
+  vib([8,40,8]);
+}
+function playCatAdd(){
+  try{const ctx=getAC(),t=ctx.currentTime;bell(1319,t,.09,.5);bell(1661,t+.06,.08,.5);bell(1976,t+.11,.07,.5);}catch(e){}
+  vib(10);
+}
+function playAllDone(){
+  try{const ctx=getAC(),t=ctx.currentTime;bell(523,t,.13,.9);bell(659,t+.10,.12,.9);bell(784,t+.20,.11,.9);bell(1047,t+.30,.13,.9);bell(1319,t+.42,.11,.9);bell(2093,t+.55,.08,.5);bell(2637,t+.62,.07,.5);bell(3136,t+.68,.06,.5);}catch(e){}
+  vib([15,40,15,40,30]);
+}
 
 /* Accent */
 const SWATCHES=['#ffffff','#f2efeb','#a8bec8','#a8bdb4','#bdb4c8','#c8b4b0','#bfb89a','#a4bab8','#c8baa4','#baaab6','#7a7570','#9a8468','#7a6a8a','#4e7868','#8a5a50','#506080','#6a5448'];
@@ -1306,6 +1296,104 @@ document.getElementById('customColor').value=savedHex;
 applyAccent(savedHex);
 updateDateUI();
 renderCats();renderTodos();renderBucket();renderRoutineBar();renderWeeklyReport();
+
+// Splash Screen (2回目以降のみ)
+(function(){
+  if(!localStorage.getItem('diary-onboarded-v1')) return; // 初回はオンボーディング優先
+
+  const splash = document.getElementById('splash');
+  const canvas = document.getElementById('splashCanvas');
+  splash.style.display = 'flex';
+
+  // --- Particle animation ---
+  const ctx = canvas.getContext('2d');
+  let W, H, particles = [], raf, t = 0;
+
+  function resize(){
+    W = canvas.width = canvas.offsetWidth;
+    H = canvas.height = canvas.offsetHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const ar = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ar').trim())||160;
+  const ag = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ag').trim())||140;
+  const ab = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ab').trim())||120;
+
+  function createParticle(fromBottom){
+    const y = fromBottom ? H + 8 : Math.random() * H;
+    return {
+      x: Math.random() * W,
+      y,
+      r: Math.random() * 2.5 + 0.8,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: -(Math.random() * 0.6 + 0.2),
+      alpha: Math.random() * 0.32 + 0.12, // 前より濃く
+      life: fromBottom ? 0 : Math.random()
+    };
+  }
+
+  for(let i = 0; i < 80; i++) particles.push(createParticle(false));
+
+  // blobのアニメーション用オフセット
+  const blobs = [
+    {cx:0.25, cy:0.38, r:0.42, ox:0, oy:0, spd:0.0007},
+    {cx:0.72, cy:0.62, r:0.36, ox:1, oy:2, spd:0.0011},
+    {cx:0.50, cy:0.80, r:0.28, ox:3, oy:1, spd:0.0009},
+  ];
+
+  function drawParticles(){
+    t++;
+    ctx.clearRect(0, 0, W, H);
+
+    // 動くgradient blobs（振幅を大きくして動きを見せる）
+    blobs.forEach(b => {
+      const bx = W * (b.cx + Math.sin(t * b.spd + b.ox) * 0.08);
+      const by = H * (b.cy + Math.cos(t * b.spd + b.oy) * 0.07);
+      const br = W * b.r;
+      const g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+      g.addColorStop(0, `rgba(${ar},${ag},${ab},0.13)`);
+      g.addColorStop(0.5, `rgba(${ar},${ag},${ab},0.05)`);
+      g.addColorStop(1, `rgba(250,249,247,0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    });
+
+    // particles
+    particles.forEach(p => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life += 0.005;
+      if(p.y < -10 || p.life > 1){
+        Object.assign(p, createParticle(true));
+        return;
+      }
+      const a = p.alpha * Math.sin(p.life * Math.PI);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(${ar},${ag},${ab},${a.toFixed(3)})`;
+      ctx.fill();
+    });
+
+    raf = requestAnimationFrame(drawParticles);
+  }
+  drawParticles();
+
+  // スプラッシュをタップしたら即閉じ
+  let _splashDone = false;
+  function dismissSplash(){
+    if(_splashDone) return;
+    _splashDone = true;
+    splash.classList.add('hide');
+    setTimeout(()=>{ cancelAnimationFrame(raf); splash.style.display='none'; }, 800);
+  }
+  splash.addEventListener('click', dismissSplash);
+  splash.addEventListener('touchend', dismissSplash, {passive:true});
+
+  // 2.6秒後に自動フェードアウト
+  setTimeout(dismissSplash, 2600);
+
+})();
 
 // onboarding
 let _obStep=0;
